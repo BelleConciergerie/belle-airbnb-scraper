@@ -45,21 +45,29 @@ def _proxy_hash(proxy_url: str | None) -> str:
 
 
 async def get_api_key(task_key: str | None = None, force_refresh: bool = False) -> tuple[str, bool]:
-	"""Retourne (api_key, was_cached). Cache 24h par session proxy."""
+	"""Retourne (api_key, was_cached). Cache 24h par session proxy.
+
+	Single-flight (P1-A1) : 100 coros qui demandent api_key en parallele
+	declenchent UN seul fetch pyairbnb, les autres attendent et reutilisent.
+	"""
 	cache = get_api_key_cache()
 	proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
 	cache_key = _proxy_hash(proxy_url)
 
-	if not force_refresh:
-		cached = await cache.get(cache_key)
-		if cached:
-			return cached, True
+	async def _fetch():
+		api_key = await asyncio.to_thread(pyairbnb.get_api_key, proxy_url=proxy_url or "")
+		if not api_key:
+			raise RuntimeError("pyairbnb.get_api_key returned empty (Airbnb changed format?)")
+		return api_key
 
-	api_key = await asyncio.to_thread(pyairbnb.get_api_key, proxy_url=proxy_url or "")
-	if not api_key:
-		raise RuntimeError("pyairbnb.get_api_key returned empty (Airbnb changed format?)")
-	await cache.set(cache_key, api_key)
-	return api_key, False
+	if force_refresh:
+		# Bypass cache : fetch direct + ecrase la cache
+		api_key = await _fetch()
+		await cache.set(cache_key, api_key)
+		return api_key, False
+
+	api_key, was_cached = await cache.get_or_fetch(cache_key, _fetch)
+	return api_key, was_cached
 
 
 # ---------------------------------------------------------------------------
@@ -100,23 +108,26 @@ async def get_details(
 	room_id: str, currency: str = "EUR", language: str = "fr",
 	task_key: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-	"""Retourne (details, was_cached). Cache 7j."""
+	"""Retourne (details, was_cached). Cache 7j avec single-flight.
+
+	Single-flight (P1-A1) : N coros qui demandent meme room_id en parallele
+	declenchent UN seul fetch pyairbnb (les autres attendent).
+	"""
 	cache = get_details_cache()
 	cache_key = f"{room_id}:{currency}:{language}"
-	cached = await cache.get(cache_key)
-	if cached is not None:
-		return cached, True
 
-	proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
-	details = await asyncio.to_thread(
-		pyairbnb.get_details,
-		room_id=room_id, currency=currency, language=language,
-		proxy_url=proxy_url or "",
-	)
-	# pyairbnb.get_details retourne un dict riche
-	if details:
-		await cache.set(cache_key, details)
-	return details or {}, False
+	async def _fetch():
+		proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
+		details = await asyncio.to_thread(
+			pyairbnb.get_details,
+			room_id=room_id, currency=currency, language=language,
+			proxy_url=proxy_url or "",
+		)
+		# Retourne None si vide pour ne PAS cacher un miss (laisse retry plus tard).
+		return details if details else None
+
+	value, was_cached = await cache.get_or_fetch(cache_key, _fetch)
+	return value or {}, was_cached
 
 
 # ---------------------------------------------------------------------------
@@ -128,29 +139,33 @@ async def get_calendar(
 	room_id: str, api_key: str | None = None,
 	task_key: str | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-	"""Retourne (calendar_months, was_cached). Cache 12h.
+	"""Retourne (calendar_months, was_cached). Cache 12h avec single-flight.
 
 	Si api_key non fourni, on le fetch via le cache api_key (ou refresh).
+
+	Single-flight (P1-A1) : 100 logements qui partagent le meme room_id en
+	compset cross-Belle declenchent UN seul fetch pyairbnb. Avant : 100 calls
+	-> ~600 KB × 100 = 60 MB / cycle. Apres : ~600 KB.
 	"""
 	cache = get_calendar_cache()
 	cache_key = room_id  # task_key n'affecte pas le calendar (data publique du listing)
-	cached = await cache.get(cache_key)
-	if cached is not None:
-		return cached, True
 
-	# Fetch api_key si pas fourni
-	if not api_key:
-		api_key, _ = await get_api_key(task_key=task_key)
+	async def _fetch():
+		# Fetch api_key si pas fourni (lazy + utilise lui-meme single-flight).
+		nonlocal api_key
+		if not api_key:
+			api_key, _ = await get_api_key(task_key=task_key)
+		proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
+		calendar = await asyncio.to_thread(
+			pyairbnb.get_calendar,
+			api_key=api_key, room_id=str(room_id),
+			proxy_url=proxy_url or "",
+		)
+		# Retourne None si vide pour ne pas cacher un miss.
+		return calendar if calendar else None
 
-	proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
-	calendar = await asyncio.to_thread(
-		pyairbnb.get_calendar,
-		api_key=api_key, room_id=str(room_id),
-		proxy_url=proxy_url or "",
-	)
-	if calendar:
-		await cache.set(cache_key, calendar)
-	return calendar or [], False
+	value, was_cached = await cache.get_or_fetch(cache_key, _fetch)
+	return value or [], was_cached
 
 
 # ---------------------------------------------------------------------------

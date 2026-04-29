@@ -22,7 +22,17 @@ from .config import SETTINGS
 
 
 class TTLCache:
-	"""Async-safe LRU + TTL cache."""
+	"""Async-safe LRU + TTL cache avec single-flight sur cache miss.
+
+	Single-flight (fix P1-A1) : si N coros arrivent en parallele sur la meme
+	cle absente du cache, un seul fait le fetch upstream, les autres attendent
+	le resultat. Evite l'amplification bandwidth N× (ex 100 logements partagent
+	le meme room_id Airbnb -> avant : 100 fetches pyairbnb. Apres : 1 fetch).
+
+	Implementation : dict `_inflight` de asyncio.Event par cle. Le first-flight
+	cree l'Event, fetch, set la cache, puis set l'Event. Les waiters attendent
+	l'Event puis re-check le cache.
+	"""
 
 	def __init__(self, name: str, ttl_hours: float, maxsize: int = 2000):
 		self.name = name
@@ -30,8 +40,10 @@ class TTLCache:
 		self.maxsize = maxsize
 		self._store: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 		self._lock = asyncio.Lock()
+		self._inflight: dict[str, asyncio.Event] = {}
 		self._hits = 0
 		self._misses = 0
+		self._dedup_waits = 0  # nb de coros qui ont attendu un first-flight
 
 	async def get(self, key: str) -> Any | None:
 		async with self._lock:
@@ -57,11 +69,74 @@ class TTLCache:
 			while len(self._store) > self.maxsize:
 				self._store.popitem(last=False)
 
+	async def get_or_fetch(self, key: str, factory) -> tuple[Any, bool]:
+		"""Fetch via single-flight. `factory` est une coroutine async sans
+		argument qui retourne la valeur a cacher (ou None pour ne pas cacher).
+
+		Retourne (value, was_cached). `was_cached=True` si servi depuis cache.
+
+		Pattern :
+		  - first-flight : cree Event, lance factory, cache si non-None, set Event
+		  - waiters : await Event, re-check cache (devrait y etre)
+		  - si factory raise : on propage l'exception aux waiters
+		"""
+		# Phase 1 : check cache + decide first-flight vs wait
+		async with self._lock:
+			entry = self._store.get(key)
+			if entry is not None:
+				ts, value = entry
+				if time.time() - ts <= self.ttl_seconds:
+					self._store.move_to_end(key)
+					self._hits += 1
+					return value, True
+				# Stale -> drop
+				self._store.pop(key, None)
+
+			event = self._inflight.get(key)
+			if event is None:
+				# First-flight : on cree l'Event et fetche
+				event = asyncio.Event()
+				self._inflight[key] = event
+				am_first = True
+				self._misses += 1
+			else:
+				am_first = False
+				self._dedup_waits += 1
+
+		if not am_first:
+			# Waiter : on attend que le first-flight finisse
+			await event.wait()
+			# Re-check cache. Le first-flight a soit cache la valeur, soit
+			# echoue (auquel cas on retombe en miss et on lance notre propre
+			# fetch via recursion).
+			cached = await self.get(key)
+			if cached is not None:
+				return cached, True
+			# Le first-flight a echoue ou retourne None. On retry comme first.
+			return await self.get_or_fetch(key, factory)
+
+		# First-flight : execute factory + cache + signal waiters
+		try:
+			value = await factory()
+			if value is not None:
+				await self.set(key, value)
+			return value, False
+		finally:
+			# Toujours signaler les waiters pour qu'ils ne se bloquent pas
+			# meme si factory a raise une exception.
+			async with self._lock:
+				event.set()
+				self._inflight.pop(key, None)
+
 	async def clear(self) -> None:
 		async with self._lock:
 			self._store.clear()
+			# Note : on ne touche pas _inflight pour ne pas bloquer les coros
+			# qui sont en train d'attendre un Event. Ils vont juste re-check
+			# un cache vide et fetcher eux-memes.
 			self._hits = 0
 			self._misses = 0
+			self._dedup_waits = 0
 
 	async def stats(self) -> dict:
 		async with self._lock:
@@ -80,6 +155,8 @@ class TTLCache:
 				"misses": self._misses,
 				"hit_rate": round(hit_rate, 3),
 				"oldest_age_hours": oldest_age_h,
+				"inflight": len(self._inflight),
+				"dedup_waits": self._dedup_waits,
 			}
 
 
