@@ -1,0 +1,45 @@
+[project]
+name = "belle_airbnb_scraper"
+version = "0.1.0"
+description = "Airbnb scraper service (FastAPI wrapper around pyairbnb-belle fork)"
+authors = [{ name = "Belle Conciergerie", email = "contact@belleconciergerie.com" }]
+requires-python = ">=3.12"
+readme = "README.md"
+dependencies = [
+    "fastapi==0.115.5",
+    "uvicorn[standard]==0.32.1",
+    "pydantic==2.10.4",
+    "python-dotenv==1.0.1",
+    # pyairbnb fork avec patches Belle (decode raise, no Galapagos, timeouts, etc.)
+    "pyairbnb @ git+https://github.com/BelleConciergerie/pyairbnb.git@v2.2.1-belle-1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.0",
+    "ruff==0.8.4",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["airbnb_scraper*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "RUF"]
+ignore = ["E501", "B904", "RUF001", "RUF003", "W191", "E101", "UP038"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "tab"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
