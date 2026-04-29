@@ -21,6 +21,11 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 
+# pyairbnb leve UnavailableError pour les dates booked (semantique = pas dispo,
+# pas une vraie erreur). On l'attrape pour repondre 200 + {"unavailable": true}
+# au lieu de 502 -> evite les retries client inutiles (3 × 4-8s par date booked).
+from pyairbnb.price import UnavailableError
+
 from . import __version__
 from . import client as _client
 from .cache import get_api_key_cache, get_calendar_cache, get_details_cache
@@ -200,12 +205,28 @@ async def hotel_calendar(req: HotelCalendarRequest) -> HotelCalendarResponse:
 	dependencies=[Depends(require_api_key)],
 )
 async def hotel_price(req: HotelPriceRequest) -> HotelPriceResponse:
-	"""Prix d'un listing pour une fenetre check_in/check_out. NO cache."""
+	"""Prix d'un listing pour une fenetre check_in/check_out. NO cache.
+
+	UnavailableError (dates booked) -> 200 + price={"unavailable": true}. Avant :
+	502 + retries client inutiles (3 × 4-8s = ~15s perdus par date booked
+	sur les compsets de zone tendue style Cannes haute saison).
+	"""
 	try:
 		price = await _client.get_price(
 			room_id=req.room_id, check_in=req.check_in, check_out=req.check_out,
 			api_key=req.api_key, currency=req.currency, adults=req.adults,
 			task_key=req.task_key,
+		)
+	except UnavailableError as e:
+		# Dates booked : reponse semantiquement valide, pas une erreur reseau.
+		# On retourne 200 avec un flag explicite que le caller (belle-pricing)
+		# detecte pour ne pas retry.
+		log.info("hotel_price unavailable %s %s..%s: %s",
+		         req.room_id, req.check_in, req.check_out, str(e)[:100])
+		return HotelPriceResponse(
+			room_id=req.room_id, check_in=req.check_in, check_out=req.check_out,
+			price={"unavailable": True, "reason": str(e)[:200]},
+			captured_at=_now_iso(),
 		)
 	except Exception as e:
 		log.exception("get_price failed for %s", req.room_id)
