@@ -69,6 +69,11 @@ class TTLCache:
 			while len(self._store) > self.maxsize:
 				self._store.popitem(last=False)
 
+	# R5 : retries bornes pour eviter recursion infinie si Airbnb down.
+	# Avant : recursion sur factory_failed -> stack overflow theorique apres
+	# ~1000 echecs en cascade. Now : boucle for + abort.
+	_MAX_FETCH_ATTEMPTS = 3
+
 	async def get_or_fetch(self, key: str, factory) -> tuple[Any, bool]:
 		"""Fetch via single-flight. `factory` est une coroutine async sans
 		argument qui retourne la valeur a cacher (ou None pour ne pas cacher).
@@ -79,54 +84,58 @@ class TTLCache:
 		  - first-flight : cree Event, lance factory, cache si non-None, set Event
 		  - waiters : await Event, re-check cache (devrait y etre)
 		  - si factory raise : on propage l'exception aux waiters
+		  - si factory_failed cascade : retry borne (max 3 attempts) puis abort
 		"""
-		# Phase 1 : check cache + decide first-flight vs wait
-		async with self._lock:
-			entry = self._store.get(key)
-			if entry is not None:
-				ts, value = entry
-				if time.time() - ts <= self.ttl_seconds:
-					self._store.move_to_end(key)
-					self._hits += 1
-					return value, True
-				# Stale -> drop
-				self._store.pop(key, None)
-
-			event = self._inflight.get(key)
-			if event is None:
-				# First-flight : on cree l'Event et fetche
-				event = asyncio.Event()
-				self._inflight[key] = event
-				am_first = True
-				self._misses += 1
-			else:
-				am_first = False
-				self._dedup_waits += 1
-
-		if not am_first:
-			# Waiter : on attend que le first-flight finisse
-			await event.wait()
-			# Re-check cache. Le first-flight a soit cache la valeur, soit
-			# echoue (auquel cas on retombe en miss et on lance notre propre
-			# fetch via recursion).
-			cached = await self.get(key)
-			if cached is not None:
-				return cached, True
-			# Le first-flight a echoue ou retourne None. On retry comme first.
-			return await self.get_or_fetch(key, factory)
-
-		# First-flight : execute factory + cache + signal waiters
-		try:
-			value = await factory()
-			if value is not None:
-				await self.set(key, value)
-			return value, False
-		finally:
-			# Toujours signaler les waiters pour qu'ils ne se bloquent pas
-			# meme si factory a raise une exception.
+		for attempt in range(self._MAX_FETCH_ATTEMPTS):
+			# Phase 1 : check cache + decide first-flight vs wait
 			async with self._lock:
-				event.set()
-				self._inflight.pop(key, None)
+				entry = self._store.get(key)
+				if entry is not None:
+					ts, value = entry
+					if time.time() - ts <= self.ttl_seconds:
+						self._store.move_to_end(key)
+						self._hits += 1
+						return value, True
+					# Stale -> drop
+					self._store.pop(key, None)
+
+				event = self._inflight.get(key)
+				if event is None:
+					# First-flight : on cree l'Event et fetche
+					event = asyncio.Event()
+					self._inflight[key] = event
+					am_first = True
+					if attempt == 0:
+						self._misses += 1
+				else:
+					am_first = False
+					if attempt == 0:
+						self._dedup_waits += 1
+
+			if not am_first:
+				# Waiter : on attend que le first-flight finisse
+				await event.wait()
+				# Re-check cache. Le first-flight a soit cache la valeur, soit
+				# echoue (auquel cas on boucle pour devenir nous-memes first).
+				cached = await self.get(key)
+				if cached is not None:
+					return cached, True
+				# Failed : on retry comme first-flight au prochain tour de loop.
+				continue
+
+			# First-flight : execute factory + cache + signal waiters
+			try:
+				value = await factory()
+				if value is not None:
+					await self.set(key, value)
+				return value, False
+			finally:
+				async with self._lock:
+					event.set()
+					self._inflight.pop(key, None)
+
+		# 3 tentatives epuisees -> abandonner. Le caller voit None.
+		return None, False
 
 	async def clear(self) -> None:
 		async with self._lock:

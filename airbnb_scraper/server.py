@@ -16,6 +16,7 @@ Auth : header X-API-Key sur toutes les routes sauf /health.
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -77,7 +78,10 @@ app = FastAPI(
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")):
-	if x_api_key != SETTINGS.api_key:
+	# secrets.compare_digest = constant-time compare, evite timing attacks meme
+	# si le service est expose publiquement (defense en profondeur).
+	expected = SETTINGS.api_key or ""
+	if not secrets.compare_digest(x_api_key or "", expected):
 		raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
