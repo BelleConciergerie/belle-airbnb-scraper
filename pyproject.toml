@@ -1,6 +1,6 @@
 [project]
 name = "belle_airbnb_scraper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Airbnb scraper service (FastAPI wrapper around pyairbnb-belle fork)"
 authors = [{ name = "Belle Conciergerie", email = "contact@belleconciergerie.com" }]
 requires-python = ">=3.12"
@@ -10,8 +10,10 @@ dependencies = [
     "uvicorn[standard]==0.32.1",
     "pydantic==2.10.4",
     "python-dotenv==1.0.1",
-    # pyairbnb fork avec patches Belle (decode raise, no Galapagos, timeouts, etc.)
-    "pyairbnb @ git+https://github.com/BelleConciergerie/pyairbnb.git@v2.2.1-belle-1",
+    # pyairbnb fork avec patches Belle v2 (rebase sur upstream HEAD avec
+    # fix amenities PR #60, search empty fix PR #54, StaysSearch operationId
+    # fix). Tag v2.3.0-belle-1 = upstream fffe53e + 3 patches Belle.
+    "pyairbnb @ git+https://github.com/BelleConciergerie/pyairbnb.git@v2.3.0-belle-1",
 ]
 
 [project.optional-dependencies]
