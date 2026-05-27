@@ -45,14 +45,26 @@ def _proxy_hash(proxy_url: str | None) -> str:
 
 
 async def get_api_key(task_key: str | None = None, force_refresh: bool = False) -> tuple[str, bool]:
-	"""Retourne (api_key, was_cached). Cache 24h par session proxy.
+	"""Retourne (api_key, was_cached). Cache 24h GLOBAL (token public Airbnb).
 
-	Single-flight (P1-A1) : 100 coros qui demandent api_key en parallele
-	declenchent UN seul fetch pyairbnb, les autres attendent et reutilisent.
+	Single-flight global : N coros qui demandent api_key en parallele declenchent
+	UN seul fetch pyairbnb upstream, les autres attendent l'Event et recuperent
+	le meme token (api_key Airbnb est un token public extrait depuis la home page
+	www.airbnb.com, valide cross-IP).
+
+	FIX fan-out : avant on keyait sur _proxy_hash(proxy_url) qui contient
+	session-{task_key} -> 100 task_keys uniques = 100 cache_keys distincts = 100
+	fetches concurrents (cassait le single-flight). Maintenant cache_key="global"
+	-> 1 seul fetch pyairbnb partage par tous les sub-jobs RQ.
+
+	`task_key` reste utilise pour le proxy_url (IP IPRoyal dediee au fetch lui-meme),
+	mais le RESULT api_key est cache globalement.
 	"""
 	cache = get_api_key_cache()
 	proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
-	cache_key = _proxy_hash(proxy_url)
+	# Cache key partagee : api_key Airbnb est un token PUBLIC cross-IP,
+	# pas de raison de scoper par task_key/proxy_session.
+	cache_key = "global"
 
 	async def _fetch():
 		api_key = await asyncio.to_thread(pyairbnb.get_api_key, proxy_url=proxy_url or "")

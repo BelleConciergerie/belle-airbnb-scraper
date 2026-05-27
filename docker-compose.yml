@@ -11,8 +11,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "1.0"
+          # Fan-out : 4 workers uvicorn + cache 5000 entries (details ~500KB +
+          # calendar ~600KB) ~= 5-6 GB worst case, 2GB suffisant en utilisation
+          # nominale avec LRU eviction.
+          memory: 2G
+          cpus: "2.0"
     logging:
       driver: json-file
       options:
