@@ -1,6 +1,14 @@
 """Tests des Pydantic models : validation entrees."""
+from datetime import date, timedelta
+
 import pytest
 from pydantic import ValidationError
+
+# Dates dynamiques dans le futur : models.py rejette toute date a plus de
+# _PAST_DATE_TOLERANCE_DAYS jours dans le passe, donc on ne peut pas figer
+# des dates en dur (elles deviennent invalides avec le temps).
+_CI = (date.today() + timedelta(days=30)).isoformat()
+_CO = (date.today() + timedelta(days=31)).isoformat()
 
 from airbnb_scraper.models import (
 	HotelDetailsRequest,
@@ -24,10 +32,12 @@ class TestSearchRequest:
 			SearchRequest(ne_lat=43.0, ne_long=7.05, sw_lat=43.5, sw_long=7.0)
 
 	def test_dates_inverted(self):
+		ci = (date.today() + timedelta(days=30)).isoformat()
+		co = (date.today() + timedelta(days=29)).isoformat()
 		with pytest.raises(ValidationError):
 			SearchRequest(
 				ne_lat=43.6, ne_long=7.05, sw_lat=43.55, sw_long=7.0,
-				check_in="2026-05-15", check_out="2026-05-14",
+				check_in=ci, check_out=co,
 			)
 
 	def test_dates_optional(self):
@@ -55,7 +65,7 @@ class TestHotelPriceRequest:
 	def test_valid_window(self):
 		r = HotelPriceRequest(
 			room_id="764133092500775861",
-			check_in="2026-05-15", check_out="2026-05-16",
+			check_in=_CI, check_out=_CO,
 		)
 		assert r.adults == 1
 
@@ -63,5 +73,5 @@ class TestHotelPriceRequest:
 		with pytest.raises(ValidationError):
 			HotelPriceRequest(
 				room_id="764133092500775861",
-				check_in="2026-05-15", check_out="2026-05-15",
+				check_in=_CI, check_out=_CI,
 			)
