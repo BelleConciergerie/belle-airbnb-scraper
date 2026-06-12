@@ -201,6 +201,7 @@ async def get_price(
 	price = await asyncio.to_thread(
 		pyairbnb.get_price,
 		room_id=str(room_id), check_in=ci, check_out=co,
+		adults=adults,
 		currency=currency, api_key=api_key,
 		proxy_url=proxy_url or "",
 	)

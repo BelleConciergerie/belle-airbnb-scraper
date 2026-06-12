@@ -84,7 +84,7 @@ class TTLCache:
 		  - first-flight : cree Event, lance factory, cache si non-None, set Event
 		  - waiters : await Event, re-check cache (devrait y etre)
 		  - si factory raise : on propage l'exception aux waiters
-		  - si factory_failed cascade : retry borne (max 3 attempts) puis abort
+		  - si factory_failed cascade : retry borne (max 3 attempts) puis raise
 		"""
 		for attempt in range(self._MAX_FETCH_ATTEMPTS):
 			# Phase 1 : check cache + decide first-flight vs wait
@@ -134,8 +134,14 @@ class TTLCache:
 					event.set()
 					self._inflight.pop(key, None)
 
-		# 3 tentatives epuisees -> abandonner. Le caller voit None.
-		return None, False
+		# 3 tentatives epuisees -> on raise une exception explicite plutot que
+		# de retourner None. Sinon le None remonte silencieusement (api_key=None
+		# -> ResponseValidationError 500, details={} -> 404 faux, calendar vide)
+		# alors que les handlers FastAPI savent convertir une exception en 502.
+		raise RuntimeError(
+			f"get_or_fetch({self.name}:{key}) failed after "
+			f"{self._MAX_FETCH_ATTEMPTS} attempts"
+		)
 
 	async def clear(self) -> None:
 		async with self._lock:
