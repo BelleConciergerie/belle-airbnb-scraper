@@ -145,6 +145,8 @@ async def search(req: SearchRequest) -> SearchResponse:
 			check_in=req.check_in, check_out=req.check_out,
 			zoom_value=req.zoom_value, currency=req.currency,
 			price_min=req.price_min, price_max=req.price_max,
+			adults=req.adults, children=req.children,
+			min_bedrooms=req.min_bedrooms, min_beds=req.min_beds,
 			task_key=req.task_key,
 		)
 	except Exception as e:

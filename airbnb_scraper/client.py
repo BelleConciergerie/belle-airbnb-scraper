@@ -92,9 +92,17 @@ async def search_all(
 	check_in: str | None, check_out: str | None,
 	zoom_value: int = 2, currency: str = "EUR",
 	price_min: int = 0, price_max: int = 0,
+	adults: int = 0, children: int = 0,
+	min_bedrooms: int = 0, min_beds: int = 0,
 	task_key: str | None = None,
 ) -> list[dict[str, Any]]:
-	"""Search listings dans la bbox. Pas de cache (varie trop par dates/bbox)."""
+	"""Search listings dans la bbox. Pas de cache (varie trop par dates/bbox).
+
+	adults/children/min_bedrooms/min_beds = filtres serveur Airbnb (mirror des
+	filtres du site). adults=N ne ramene que les biens accueillant >= N personnes.
+	Critique pour les gros biens : une recherche bbox plafonne ~280 resultats cote
+	Airbnb, sans filtre ils sont noyes dans les studios. 0 = pas de filtre.
+	"""
 	proxy_url = get_proxy_manager().get_proxy_url(task_key=task_key)
 	# pyairbnb.search_all accepte check_in/out string ou None.
 	listings = await asyncio.to_thread(
@@ -105,6 +113,8 @@ async def search_all(
 		sw_lat=sw_lat, sw_long=sw_long,
 		zoom_value=zoom_value,
 		price_min=price_min, price_max=price_max,
+		adults=adults, children=children,
+		min_bedrooms=min_bedrooms, min_beds=min_beds,
 		currency=currency,
 		proxy_url=proxy_url or "",
 	)

@@ -48,6 +48,14 @@ class SearchRequest(BaseModel):
 	currency: str = Field(default="EUR", min_length=3, max_length=3)
 	price_min: int = Field(default=0, ge=0)
 	price_max: int = Field(default=0, ge=0)
+	# Filtres capacite/taille (mirror des filtres du site Airbnb).
+	# adults=N -> ne ramene que les biens accueillant >= N personnes : essentiel
+	# pour les gros biens (villas) sinon noyes dans les studios (plafond ~280/recherche).
+	# 0 = pas de filtre (defaut, comportement bbox brut historique).
+	adults: int = Field(default=0, ge=0, le=30)
+	children: int = Field(default=0, ge=0, le=30)
+	min_bedrooms: int = Field(default=0, ge=0, le=50)
+	min_beds: int = Field(default=0, ge=0, le=50)
 	# Sticky session proxy : permet d'avoir la meme IP IPRoyal pour toutes
 	# les requetes d'un meme cluster (ex compset d'un logement).
 	task_key: str | None = None
