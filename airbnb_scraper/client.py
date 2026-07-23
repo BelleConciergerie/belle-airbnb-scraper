@@ -144,6 +144,10 @@ async def get_details(
 			pyairbnb.get_details,
 			room_id=room_id, currency=currency, language=language,
 			proxy_url=proxy_url or "",
+			# Airbnb redirige les IP FR www.airbnb.com -> www.airbnb.fr via un stub
+			# handoff /v2/domain_switch (page sans #data-deferred-state-0 -> parse 502).
+			# Proxy IPRoyal FR : on tape le domaine FR directement.
+			domain="www.airbnb.fr",
 		)
 		# Retourne None si vide pour ne PAS cacher un miss (laisse retry plus tard).
 		return details if details else None
