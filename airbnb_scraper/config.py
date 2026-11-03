@@ -19,6 +19,17 @@ class Settings:
 	iproyal_port: int
 	iproyal_country: str | None
 	iproyal_lifetime: str
+	# Proxy DataImpulse (second fournisseur) : gw.dataimpulse.com, port 823 pour une IP qui change a chaque requete,
+	# ports 10000 a 20000 pour une session fixe (jusqu'a 120 min) ; le pays se met dans l'identifiant (`__cr.fr`).
+	dataimpulse_user: str | None
+	dataimpulse_pass: str | None
+	dataimpulse_host: str
+	dataimpulse_port: int
+	dataimpulse_country: str | None
+	dataimpulse_sticky_min: int
+	dataimpulse_sticky_max: int
+	# Fournisseur par defaut quand le task_key ne le precise pas : "iproyal" ou "dataimpulse".
+	proxy_provider: str
 	# Cache TTL.
 	cache_calendar_ttl_hours: float
 	cache_api_key_ttl_hours: float
@@ -27,8 +38,16 @@ class Settings:
 	log_level: str
 
 	@property
-	def has_proxy(self) -> bool:
+	def has_iproyal(self) -> bool:
 		return bool(self.iproyal_user and self.iproyal_pass)
+
+	@property
+	def has_dataimpulse(self) -> bool:
+		return bool(self.dataimpulse_user and self.dataimpulse_pass)
+
+	@property
+	def has_proxy(self) -> bool:
+		return self.has_iproyal or self.has_dataimpulse
 
 
 def load_settings() -> Settings:
@@ -40,6 +59,14 @@ def load_settings() -> Settings:
 		iproyal_port=int(os.getenv("IPROYAL_PORT", "12321")),
 		iproyal_country=os.getenv("IPROYAL_COUNTRY") or None,
 		iproyal_lifetime=os.getenv("IPROYAL_LIFETIME", "30m"),
+		dataimpulse_user=os.getenv("DATAIMPULSE_USER"),
+		dataimpulse_pass=os.getenv("DATAIMPULSE_PASS"),
+		dataimpulse_host=os.getenv("DATAIMPULSE_HOST", "gw.dataimpulse.com"),
+		dataimpulse_port=int(os.getenv("DATAIMPULSE_PORT", "823")),
+		dataimpulse_country=os.getenv("DATAIMPULSE_COUNTRY", "fr") or None,
+		dataimpulse_sticky_min=int(os.getenv("DATAIMPULSE_STICKY_MIN", "10000")),
+		dataimpulse_sticky_max=int(os.getenv("DATAIMPULSE_STICKY_MAX", "20000")),
+		proxy_provider=os.getenv("PROXY_PROVIDER", "iproyal").strip().lower(),
 		# api_key Airbnb : token JS extrait depuis homepage. Change rarement.
 		# 24h TTL = 1 fetch / jour au lieu de 1 / call.
 		cache_api_key_ttl_hours=float(os.getenv("CACHE_API_KEY_TTL_HOURS", "24")),

@@ -51,6 +51,8 @@ Après : service Docker dédié avec caches partagés.
 
 Auth : header `X-API-Key` requis sauf `/health`.
 
+**Proxys** : deux fournisseurs, IPRoyal (`IPROYAL_*`) et DataImpulse (`DATAIMPULSE_USER`, `DATAIMPULSE_PASS`, `DATAIMPULSE_COUNTRY=fr`). Le fournisseur se choisit par le préfixe du `task_key` (`ip:` ou `di:`), sinon `PROXY_PROVIDER` (défaut `iproyal`). Sans `task_key`, DataImpulse change d'IP à chaque requête (port 823) ; avec, un port fixe (10000 à 20000) garde la même IP jusqu'à 120 min.
+
 ### `POST /search`
 
 ```json
